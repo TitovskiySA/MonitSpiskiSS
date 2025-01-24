@@ -2,14 +2,13 @@
 # -*- coding: utf-8 -*-
 
 # автор: Титовский С.А.
-# 18/12/2024
+# 22/01/2025
 
 import wx
 from wx.adv import TaskBarIcon as TaskBarIcon
-from wx.adv import SplashScreen as SplashScreen
 import sys
-import requests
-import re
+#import requests
+#import re
 import time
 import string # for buttons
 import datetime  # импорт библиотеки дат и времени
@@ -26,7 +25,12 @@ import threading
 from threading import Thread # для работы с потоками
 from pubsub import pub # для работы с подписчиками
 import ftplib # для работы с ftp
-import queue
+#import queue
+from HelloFrame import HelloFrame # import helloframe
+from CheckFrame import ChFrame # import checkframe
+from Logging import LogThread, ToLog # import logging
+from SettingsDlg import SettingsDlg #import settingdlg
+from RoitineFoo import DataForMChanges, DataOneMeeting # for parsing mchanges, pchanges
 
 #=============================================
 #=============================================
@@ -94,7 +98,7 @@ def except_method_briefer(method):
             method(self, *args, **kwargs)
         except Exception as Err:
             ToLog(f"Error in {method.__name__}, *args = {args}, **kwargs = {kwargs}, Error code = {Err}")
-            r#aise Exception
+            #raise Exception
     return wrapper
 
 def info_method_dec(method):
@@ -105,30 +109,9 @@ def info_method_dec(method):
     return wrapper
 
 #=================================
-# HelloFrame
-class HelloFrame(SplashScreen):
-    def __init__(self, parent = None):
-        super(HelloFrame, self).__init__(
-            bitmap = wx.Bitmap(name = os.getcwd() + "\\images\\WritingPNG.png", type = wx.BITMAP_TYPE_PNG),
-            splashStyle = wx.adv.SPLASH_CENTRE_ON_SCREEN | wx.adv.SPLASH_TIMEOUT,
-            milliseconds = 1500,
-            parent = None,
-            id = -1,
-            pos = wx.DefaultPosition,
-            size = (1000,1000),
-            #wx.DefaultSize,
-            style = wx.STAY_ON_TOP | wx.BORDER_NONE)
-        self.Show(True)
-        self.Bind(wx.EVT_CLOSE, self.OnClose)
-
-    def OnClose(self, event):
-        event.Skip()
-        self.Hide()
-        
-#=================================
 # HelloFrame        
 class IconTray(TaskBarIcon):
-    def __init__(self, frame, docdir = "somedir", stop = False, pub = "SomePub"):
+    def __init__(self, frame, docdir = "somedir", stop = True, pub = "SomePub"):
         TaskBarIcon.__init__(self)
         self.frame = frame
         self.docdir = docdir
@@ -143,6 +126,7 @@ class IconTray(TaskBarIcon):
         self.CH_FRAME = wx.NewIdRef(count = 1)
         self.SHOW_STNGS = wx.NewIdRef(count = 1)
         self.SHOW_LIC = wx.NewIdRef(count = 1)
+        self.SHOW_VER = wx.NewIdRef(count = 1)
         self.EXIT_SCR = wx.NewIdRef(count = 1)
         #events
         #self.Bind(wx.adv.EVT_TASKBAR_LEFT_DCLICK, self.OnDClick)
@@ -151,6 +135,7 @@ class IconTray(TaskBarIcon):
         self.Bind(wx.EVT_MENU, self.OnCheckFrame, id = self.CH_FRAME)
         self.Bind(wx.EVT_MENU, self.OnSettings, id = self.SHOW_STNGS)
         self.Bind(wx.EVT_MENU, self.OnLicense, id = self.SHOW_LIC)
+        self.Bind(wx.EVT_MENU, self.OnVersion, id = self.SHOW_VER)
         self.Bind(wx.EVT_MENU, self.OnExit, id = self.EXIT_SCR)
 
     #@except_method_dec
@@ -164,6 +149,7 @@ class IconTray(TaskBarIcon):
         menu.Append(self.CH_FRAME, "Show status...")
         menu.Append(self.SHOW_STNGS, "Settings...")
         menu.Append(self.SHOW_LIC, "License")
+        menu.Append(self.SHOW_VER, "Version Info")
         menu.Append(self.EXIT_SCR, "Exit")
         return menu
 
@@ -190,16 +176,16 @@ class IconTray(TaskBarIcon):
             ToLog("Cancel converting")
             return
 
-        else:
-            
-            print("GetDir = ", DialogLoad.GetDirectory())
-            print("GetFilename = ", DialogLoad.GetFilename())
+        else:     
+            #print("GetDir = ", DialogLoad.GetDirectory())
+            #print("GetFilename = ", DialogLoad.GetFilename())
             selected_file = DialogLoad.GetDirectory() + "\\" + DialogLoad.GetFilename()
             selected_dir = DialogLoad.GetDirectory()
             
             tempFile = self.docdir + "\\temp\\temp.db"
             CopyFile(selected_file, tempFile)
-        
+            ToLog(f"Converting f{selected_file} to result.xlsx")
+            
             ConvThread = ConvertThread(path_to_file = tempFile, path_to_dir = selected_dir)
             ConvThread.setDaemon(True)
             ConvThread.start()
@@ -235,133 +221,27 @@ class IconTray(TaskBarIcon):
         
         wx.MessageBox(LICENSE, "Лицензия", wx.OK)
 
+    @except_method_brief
+    def OnVersion(self, evt):
+        txt = (
+            "\n\nVersion of Script 22.01.2025" +
+            "\n\nAdded: " +
+            "\n\t- Function of checking meeting participants (store it in several tables of mchanges.db)" +
+            "\n\t- AutoCleaning old Logs, on FTP and on Local"
+            "\n\nVersion of Script 25.12.2024" +
+            "\n\nAdded: " +
+            "\n\t- Question of start monitoring when executed" +
+            "\n\t- Field of current start/stop status" + 
+            "\n\nModified: " +
+            "\n\t- Flag of start, pause checking in mchanges.db\n")
+        
+        wx.MessageBox(txt, "Version Info", wx.OK)
+
     @except_method_dec
     def OnExit(self, evt):
         wx.CallAfter(
             pub.sendMessage, self.pub,
             mess = "ExitCmd")
-
-#settings dialog
-class dlg(wx.Dialog):
-    def __init__(
-        self, settings, label = "Settings"):
-        self.def_dict = {
-            "num_days": ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'], # numdays
-            "time_renew": ['30', '60', '90', '120', '150', '180', '300', '600'], # time renew16
-            "time_ftp": ['300', '600', '900', '1200', '1500'],
-            "ftp_addr": "None", "ftp_login":"None", "ftp_password":"None"}
-
-        choices = {}
-        self.Data = []
-        
-        for key in self.def_dict.keys():
-            if settings[key] in self.def_dict[key]:
-                for i in range (0, len(self.def_dict[key])):
-                    if self.def_dict[key][i] == settings[key]:
-                        choices.update({key: i})
-            else:
-                choices.update({key: 0})
-        
-        wx.Dialog.__init__(self, None, -1, label)
- 
-        labels = [
-            "Number of days", "Scanning interval, seconds",
-            "Sending to FTP interval, seconds",
-            "FTP address",
-            "FTP login",
-            "FTP password"]
-        #posSText = []
-        for i in range (0, len(labels)):
-            text = wx.StaticText(self, wx.ID_ANY, labels[i], pos = (10, 10 + 60*i))
-            text.SetFont(wx.Font(12, wx.ROMAN, wx.NORMAL, wx.NORMAL))
-
-        i = 0
-        for key in self.def_dict.keys():
-            if isinstance (self.def_dict[key], list):
-                temp = wx.Choice(self, wx.ID_ANY, pos = (10, 35 + 60*i), size = (380, 30),
-                                 choices = [str(some) for some in self.def_dict[key]])
-                temp.SetFont(wx.Font(12, wx.ROMAN, wx.NORMAL, wx.NORMAL))
-                temp.SetSelection(choices[key])
-                self.Data.append(temp)
-            else:
-                if key != "ftp_password":
-                    temp = wx.TextCtrl(
-                        self, wx.ID_ANY, settings[key], pos = (10, 35 + 60*i),
-                        size = (330, 30))
-                else:
-                    temp = wx.TextCtrl(
-                        self, wx.ID_ANY, settings[key], pos = (10, 35 + 60*i),
-                        size = (330, 30), style = wx.TE_PASSWORD)
-                
-                temp.SetFont(wx.Font(12, wx.ROMAN, wx.NORMAL, wx.NORMAL))
-                temp.SetValue(settings[key])
-                self.Data.append(temp)
-
-            i = i + 1
-                
-        OKButton = wx.Button(self, wx.ID_OK, "OK", pos = (140, 20 + 60*len(labels)), size = (120, 30))
-        OKButton.SetDefault()
-        OKButton.SetFont(wx.Font(12, wx.ROMAN, wx.NORMAL, wx.NORMAL))
-        self.SetClientSize((400, 60 + len(labels)*60))
-        self.Bind(wx.EVT_CLOSE, self.NoClose)
-    
-    def NoClose(self, evt):
-        print("No Close")
-
-#checkframe
-class ChFrame(wx.Frame):
-    def __init__(
-        self, parent = None, label = " ", data = {"some_Key": "some_value"}):
-
-        self.data = data
-    
-        #wx.Frame.__init__(self, None, -1, label)
-        wx.Frame.__init__(
-            self, parent, -1, label,
-            style =
-            wx.MINIMIZE_BOX|wx.CAPTION|wx.SYSTEM_MENU|wx.CLOSE_BOX|
-            wx.CLIP_CHILDREN|wx.MAXIMIZE_BOX|wx.RESIZE_BORDER)
-
-        frameIcon = wx.Icon(os.getcwd() + "\\images\\WritingPNG.png")
-        self.SetIcon(frameIcon)
-
-        #self.sizer = sizer = wx.BoxSizer(wx.VERTICAL)
-        self.sizer = sizer = wx.FlexGridSizer(rows = len(data.keys()), cols = 2, hgap = 6, vgap = 6)
-        #for i in range (0, len(data.keys())):
-            #sizer.AddGrowableRow(i, 0)
-        #sizer.AddGrowableCol(0, 1)
-        sizer.AddGrowableCol(1, 1)
-        self.values = {}
-        
-        for key in data.keys():
-            text = wx.StaticText(self, wx.ID_ANY, key)
-            text.SetFont(wx.Font(12, wx.ROMAN, wx.NORMAL, wx.NORMAL))
-            sizer.Add(text, -1, wx.ALL | wx.EXPAND , border = 5)
-          
-            temp = wx.TextCtrl(self, wx.ID_ANY, data[key], style = wx.TE_READONLY | wx.TE_CENTRE)
-            temp.SetFont(wx.Font(12, wx.ROMAN, wx.NORMAL, wx.NORMAL))
-            temp.SetValue(data[key])
-            self.values.update({key: temp})
-            sizer.Add(temp, -1, wx.ALL | wx.EXPAND , border = 5)
-         
-
-        colour = wx.SystemSettings.GetColour(wx.SYS_COLOUR_MENU)
-        self.SetBackgroundColour(colour)
-        
-        self.SetSizer(sizer)
-        
-        self.SetMaxSize((1000, len(data.keys()) * 60))
-        self.Layout()
-        self.Fit()
-        self.SetClientSize(500, len(data.keys()) * 60)
-        self.Show(True)
-
-    @except_method_brief
-    def UpdateData(self, upd_data = {"some_Key": "some_value"}):
-        for key in self.data.keys():
-            for upd_key in upd_data.keys():
-                if key == upd_key:
-                    self.values[key].SetValue(upd_data[key])
         
 #=========================================
 #=========================================
@@ -373,8 +253,7 @@ class Main_Frame(wx.Frame):
     def __init__(self, parent, WinPos = wx.DefaultPosition, DateUser = "01.01.2021", DocDir = os.getcwd()):
         wx.Frame.__init__(
             self, parent, -1, "Список совещаний")
-        #global Region
-        #Region = 1
+
         self.WinPos = WinPos
         self.Date = Dt_to_txt(datetime.today())
         self.DocDir = DocDir
@@ -386,13 +265,7 @@ class Main_Frame(wx.Frame):
         self.pub = "Main_Frame"
         pub.subscribe(self.UpdateDisplay, self.pub)
         
-        #print(f"MyId (Frame) = MainFrame {self.GetId()}")
-        
         self.OpenPanel()
-        #self.Show(True)
-
-        #self.Bind(wx.EVT_CLOSE, self.OnCloseWindow)
-        ToLog("Main Frame opened on Date = " + str(self.Date))
 
 #=========================================
     @info_method_dec
@@ -425,6 +298,10 @@ class Main_Frame(wx.Frame):
                 self.panel.ChangeDate(mess[1])
             elif mess[0] == "FTPtime":
                 self.panel.chData.update({"Last FTP sending time": mess[1]})
+            elif mess[0] == "AddToPChanges":
+                self.panel.ToPChanges(
+                    date = mess[1], someid = mess[2],
+                    listdata = mess[3], comment = mess[4])
                     
 #=========================================
 #=========================================
@@ -445,9 +322,14 @@ class Main_Panel(wx.Panel):
 
         #change here num of days
         self.threads = None
+        self.DThreads = {}
+        self.MThreads = {}
         self.actualData = None
         self.conns = {}
+        #self.mconns = {}
+        self.PQueueItems = {}
         self.pause = True
+        self.RenewThread = None
         self.RenewEvt = threading.Event()
 
         #chframe
@@ -457,40 +339,38 @@ class Main_Panel(wx.Panel):
             "Last databases renew time": "not updated",
             "Last FTP sending time": "not updated",
             "Script started at time": str(datetime.today()),
-            "This frame opened at time": "not updated"}
+            "This frame opened at time": "not updated",
+            "Scan Status": "Paused"}
         self.FTPtime = None
         
-        CommonVbox = wx.FlexGridSizer(rows = 2, cols = 1, hgap = 6, vgap = 6)
-        CommonVbox.AddGrowableRow(0, 1)
-        CommonVbox.AddGrowableRow(1, 1)
-        CommonVbox.AddGrowableCol(0, 1)
-
-        #-----------------------------------------------------------------
-        Btn = wx.Button(self, wx.ID_ANY, "StartStopBtn")
-        Btn.Bind(wx.EVT_BUTTON, self.OnBtn)
-
-        #ButSize = (300, 200)
-        #LoadBtn.SetSize(ButSize)
-        CommonVbox.Add(Btn, -1, wx.EXPAND | wx.ALL, 4)
-        #CommonVbox.SetMinSize(ButSize)
-
-        self.SetSizer(CommonVbox)
         self.SetSize((300, 400))
-        #self.Fit()
-
-
         self.frame.Bind(wx.EVT_CLOSE, self.OnCloseWindow)
         self.Show(True)
 
         self.Tray = IconTray(self.frame, docdir = self.DocDir, stop = self.pause, pub = self.pub)
-        self.StartScanDays(days = int(self.settings["num_days"]))
-        self.StartRenewThread()
+        self.CheckFrame()
+        self.AskForStart()
         
 #=============================================
+    @except_method_brief
+    def AskForStart(self):
+        dlg = wx.MessageDialog(
+            self, "Do you want to start checking meetings?",
+            " ", wx.YES_NO)
+        answer = dlg.ShowModal()
+        
+        if answer == wx.ID_YES:
+            print("Pressed start")
+            ToLog("Pressed Start Checking")
+            self.StartStop()
+
+        elif answer == wx.ID_NO:
+            ToLog("Pressed No Start Checking")
+
     except_method_brief
     def LoadSettings(self):
         if "settings.db" not in os.listdir(self.DocDir + "\\Based"):
-            print("Create new db file")
+            #print("Create new db file")
             self.CreateSettingsDB(path = self.DocDir + "\\Based\\settings.db")
             
         self.LoadFrDB(path = self.DocDir + "\\Based\\settings.db")
@@ -537,11 +417,9 @@ class Main_Panel(wx.Panel):
     @except_method_dec
     def SaveSettings(self):
         if "settings.db" not in os.listdir(self.DocDir + "\\Based"):
-            #print("Create new db file")
             self.CreateSettingsDB(path = self.DocDir + "\\Based\\settings.db")
         else:
             self.SaveDB(path = self.DocDir + "\\Based\\settings.db")
-        #print("Settings after load = " + str(self.settings))
 
     @except_method_dec
     def SaveDB(self, path = "somepath"):
@@ -554,25 +432,30 @@ class Main_Panel(wx.Panel):
 
     @except_method_brief
     def ShowSettings(self):
-        dlg1 = dlg(label = "Settings of MonitSpiskiSS", settings = self.settings)
+        dlg1 = SettingsDlg(label = "Settings of MonitSpiskiSS", settings = self.settings)
         if dlg1.ShowModal() == wx.ID_OK:
-            self.settings.update({"num_days": dlg1.Data[0].GetStringSelection()})
-            self.settings.update({"time_renew": dlg1.Data[1].GetStringSelection()})
-            self.settings.update({"time_ftp": dlg1.Data[2].GetStringSelection()})
-            self.settings.update({"ftp_addr": dlg1.Data[3].GetValue()})
-            self.settings.update({"ftp_login": dlg1.Data[4].GetValue()})
-            self.settings.update({"ftp_password": dlg1.Data[5].GetValue()})
-            
-        #ToLog("New settings entered = " + str(self.settings))
-        #ToLog("saving settings to db")
+            temp = {}
+            temp.update({"num_days": dlg1.Data[0].GetStringSelection()})
+            temp.update({"time_renew": dlg1.Data[1].GetStringSelection()})
+            temp.update({"time_ftp": dlg1.Data[2].GetStringSelection()})
+            temp.update({"ftp_addr": dlg1.Data[3].GetValue()})
+            temp.update({"ftp_login": dlg1.Data[4].GetValue()})
+            temp.update({"ftp_password": dlg1.Data[5].GetValue()})
+
+        if temp == self.settings:
+            ToLog("After SettingsDlg no changes entered")
+            return
+
+        self.settings = temp
         self.SaveSettings()
+        
         ToLog("Stopping threads after changing settings")
         self.StopThreads(except_renew = True)
         ToLog("Starting threads with new settings")
         self.StartScanDays(days = int(self.settings["num_days"]))
-        self.RenewThread.UpdateData(upd_data = self.settings)
+        if self.RenewThread:
+            self.RenewThread.UpdateData(upd_data = self.settings)
         
-
     @except_method_brief
     def CheckFrame(self):
         if self.chFrame != None:
@@ -583,7 +466,9 @@ class Main_Panel(wx.Panel):
                 pass
             self.chFrame = None
         self.chData.update({"This frame opened at time": str(datetime.today())})
-        self.chFrame = ChFrame(label = "Check status", data = self.chData)                    
+        self.chFrame = ChFrame(
+            label = "Check status", data = self.chData,
+            path_to_png = os.getcwd() + "\\images\\WritingPNG.png")                    
  
     @except_method_dec  
     def OnCloseWindow(self, evt):
@@ -596,12 +481,13 @@ class Main_Panel(wx.Panel):
         ToLog("Application closed by User's command")
         self.Show(False)
         ToLog(f"Save and close db file, now conns = {self.conns}")
-        print(str(self.conns.items()))
+        #print(str(self.conns.items()))
+        self.AddToDB(mess = "Application closed")
         for key in self.conns.keys():
             self.conns[key].commit()
             self.conns[key].close()
-
-        self.StopThreads()
+            
+        self.StopThreads(stop_MThreads = True)
        
         ToLog("Stopping LogThread")
         global threadLog
@@ -614,59 +500,100 @@ class Main_Panel(wx.Panel):
             
     @except_method_dec 
     def StartRenewThread(self):
-        self.RenewThread = RenewThread(evt = self.RenewEvt, pub = self.pub, settingsDict = self.settings)
+        self.RenewThread = RenewThread(evt = self.RenewEvt, pub = self.pub, settingsDict = self.settings, testChDate = False)
         self.RenewThread.setDaemon(True)
-        self.RenewEvt.clear()
         self.RenewThread.start()
 
     @except_method_dec 
-    def StopThreads(self, except_renew = False):
+    def StopThreads(self, except_renew = False, stop_MThreads = False):
         if except_renew == False:
-            self.RenewThread.Stop()
-        if self.threads:
-            for thread in self.threads:
-                thread.Stop()
+            if self.RenewThread:
+                self.RenewThread.Stop()
 
+        templist = list(self.DThreads.keys())[:]
+        for key in templist:
+            if self.DThreads[key].is_alive() == True:
+                self.DThreads[key].Stop()
+            del self.DThreads[key]
+        if stop_MThreads == True:
+            templist = list(self.MThreads.keys())[:]
+            for key in templist:
+                if self.MThreads[key].is_alive() == True:
+                    self.MThreads[key].Stop()
+                del self.MThreads[key]
+                
+  
     @except_method_dec
     def StartStop(self):
         if self.RenewEvt.isSet():
-            print("Pause Renew")
+            #print("Pause Renew")
             self.Tray.stop = True
             self.RenewEvt.clear()
+            self.AddToDB(mess = "Application paused")
+            self.chData.update({"Scan Status": "Paused"})
         else:
-            print("Resume")
-            self.Tray.stop = False
-            self.RenewEvt.set()
+            if self.RenewThread:
+                print("Resume")
+                self.Tray.stop = False
+                self.RenewEvt.set()
+                self.AddToDB(mess = "Application resumed")
+                self.chData.update({"Scan Status": "Running"})
+            else:
+                print("Start new thrings")
+                self.Tray.stop = False
+                self.RenewEvt.set()
+                self.StartScanDays(days = int(self.settings["num_days"]))
+                self.StartRenewThread()
+                self.chData.update({"Scan Status": "Running"})
+        if self.chFrame:
+            self.chFrame.UpdateData(upd_data = self.chData) 
+
+    @except_method_dec
+    def AddToDB(self, mess = "None"):
+        if self.conns:
+            for key in self.conns.keys():
+                #print(f"add to db {key} message {mess}")
+                self.conns[key].execute(
+                    "INSERT INTO MEETING_CHANGES VALUES (" +
+                    "NULL,'"  + Dt_to_txt(datetime.now()) + "','" +
+                    str(datetime.now())[11:16] + "','None'," +
+                    "'None', 'None', 'None', 'None', 'None', 'None', 'None', '" + mess + "', NULL)")
+                self.conns[key].commit()
             
     @except_method_dec
     def StartScanDays(self, days = 4):
-        self.threads = []
         self.actualData = {}
         for day in range (0, days):
-            thread = ScanDayThread(pub = self.pub, num_day = day)
+            date_tm = datetime.today() + timedelta(days = day)
+            date = Dt_to_txt(date_tm)
+    
+            thread = ScanDayThread(pub = self.pub, date = date)
             thread.setDaemon(True)
             thread.start()
-            self.threads.append(thread)
+            self.DThreads.update({date: thread})
+        print("now keys of DTHREADS = " + str(self.DThreads.keys()))
+        self.chData.update({
+            "Current threads": str(days) + " days watching: " + ", ".join(list(self.DThreads.keys()))})
 
-    @except_method_dec
+        if self.chFrame:
+            self.chFrame.UpdateData(upd_data = self.chData)
+
+    @except_method_briefer
     def RenewCommand(self, first_time = False):
         if first_time == False:
             self.chData.update({"Last databases renew time": str(datetime.today())})
         if self.FTPtime:
             self.chData.update({"Last FTP sending time": self.FTPtime})                   
-        #print("RENEW cur conns = " + ", ".join(self.conns.keys()))
-        #print("RENEW cur datas = " + ", ".join(self.actualData.keys()))
-        #print("Threads in self.threaads")
         templist = []
-        if self.threads:
-            for thread in self.threads:
-                templist.append(thread.date)
-                thread.ScanNow(first_time)
-            self.chData.update({
+        for key in self.DThreads.keys():
+            self.DThreads[key].ScanNow(first_time)
+            templist.append(key)
+        
+        self.chData.update({
             "Current threads": str(len(templist)) + " days watching: " + ", ".join(templist)})
 
         if self.chFrame:
-            self.chFrame.UpdateData(upd_data = self.chData)     
+            self.chFrame.UpdateData(upd_data = self.chData)
 
     @except_method_briefer
     def CheckDate(self, first_time, date, data):
@@ -674,57 +601,99 @@ class Main_Panel(wx.Panel):
             if datetime.strptime(date, "%d.%m.%Y") < (datetime.strptime(Dt_to_txt(datetime.today()), "%d.%m.%Y")):
                 print(f"Received data from past days {date}, deleting this date from threads")
                 ToLog(f"Received data from past days {date}, deleting this date from threads")
-                if date in self.actualData.keys():
-                    del self.actualData[date]
-                if date in self.conns.keys():
-                    self.conns[date].commit()
-                    self.conns[date].close()
-                    del self.conns[date]
+                self.PopOldDate(date = date, source = "CheckDate foo")
             else:
-                self.RenewData(first_time, date, data)
-                
+                self.RenewData(first_time, date, data)  
         else:
             self.RenewData(first_time, date, data)
-
-    @except_method_dec
-    def ChangeDate(self, date):
-        text_date = Dt_to_txt(date)
         
-        #compare current treads and dates
-        data_list = []
-        thread_list = []
+    @except_method_dec
+    def ChangeDate(self, date):     
+        text_date = Dt_to_txt(date)
+        keys = list(self.DThreads.keys())[:]
+        survived = []
+        
+        for key in keys:
+            temp_date = self.DThreads[key].date
+            #if (datetime.strptime(thread.date, "%d.%m.%Y") + timedelta(days = 1)).date() < date.date():
+            if datetime.strptime(temp_date, "%d.%m.%Y").date() < date.date():
+                ToLog(f"Deleting ScanThread with old date {temp_date}")
+                print(f"Deleting ScanThread with old date {temp_date}")
+                self.PopOldDate(date = temp_date, source = "ChangeDate")
+               
+                #self.CleanOldLogFiles(keys = ["mchanges_"])
+            else:
+                survived.append(temp_date)
+        
+        new_data_list = []
         for day in range (0, int(self.settings["num_days"])):
             temp_day = date + timedelta(days = day)
-            data_list.append(Dt_to_txt(temp_day))
-        for day in range (0, len(self.threads)):
-            thread_list.append(self.threads[day].date)
-        #pop old threads
-        temp = []
-        for thread in self.threads:
-            if datetime.strptime(thread.date, "%d.%m.%Y").date() < date.date():
-                ToLog(f"Deleting ScanThread with old date {thread.date}")
-                print(f"Deleting ScanThread with old date {thread.date}")
-                thread.Stop()
-                if thread.date in self.actualData.keys():
-                    del self.actualData[thread.date]
-                if thread.date in self.conns.keys():
-                    self.conns[thread.date].commit()
-                    self.conns[thread.date].close()
-                    del self.conns[thread.date]
-            else:
-                self.CreateNewDB(text_date)
-                temp.append(thread)
-        self.threads = temp[:]
-        new_datas = list(set(data_list) - set(thread_list))
+            new_data_list.append(Dt_to_txt(temp_day))
+        print("new_data_list = " + str(new_data_list))
+        print("survived = " + str(survived))
+            
+        new_datas = list(set(new_data_list) - set(survived))[:]
+        print("New Datas = " + str(new_datas))
+        if len(new_datas) > 0:
+            for day in new_datas:
+                thread = ScanDayThread(pub = self.pub, date = day)
+                thread.setDaemon(True)
+                thread.start()
+                self.DThreads.update({day: thread})
+                self.CreateNewDB(day)
+        print("now keys of DTHREADS = " + str(self.DThreads.keys()))
+        self.chData.update({
+            "Current threads": str(len(self.DThreads.keys())) + " days watching: " + ", ".join(list(self.DThreads.keys()))})
 
-        for day in new_datas:
-            thread = ScanDayThread(pub = self.pub, num_day = day, date = day)
-            thread.setDaemon(True)
-            thread.start()
-            self.threads.append(thread)
-                 
+        if self.chFrame:
+            self.chFrame.UpdateData(upd_data = self.chData)
+
+    @except_method_dec
+    def PopOldDate(self, date = "01.01.2012", source = "some_source", except_DThreads = False):
+        global LogDir
+        global MonitLogDir
+        print("from source = " + source)
+        templist = list(self.MThreads.keys())[:]
+        if date in templist:
+            if self.MThreads[date].is_alive() == True:
+                self.MThreads[date].Stop()
+            del self.MThreads[date]
+        if except_DThreads == False:
+            templist = list(self.DThreads.keys())[:]
+            if date in templist:
+                if self.DThreads[date].is_alive() == True:
+                    self.DThreads[date].Stop()
+                del self.DThreads[date]
+        templist = list(self.actualData.keys())[:]
+        if date in templist:
+            del self.actualData[date]
+        templist = list(self.conns.keys())[:]
+        if date in templist:
+            self.conns[date].commit()
+            self.conns[date].close()
+            del self.conns[date]
+        templist = list(self.PQueueItems.keys())[:]
+        if date in templist:
+            del self.PQueueItems[date]
+
+        ToLog("now connkeys = " + str(self.conns.keys()))
+        ToLog("now DThreadkeys = " + str(self.DThreads.keys()))
+        ToLog("now MThreadkeys = " + str(self.MThreads.keys()))
+        ToLog("now act datakeys = " + str(self.actualData.keys()))
+        ToLog("now PQ datakeys = " + str(self.PQueueItems.keys()))
+        
+        print("now connkeys = " + str(self.conns.keys()))
+        print("now DThreadkeys = " + str(self.DThreads.keys()))
+        print("now MThreadkeys = " + str(self.MThreads.keys()))
+        print("now act datakeys = " + str(self.actualData.keys()))
+        print("now PQ datakeys = " + str(self.PQueueItems.keys()))
+
+        ClearLogs(LogDir)
+        ClearLogs(MonitLogDir)
+                
     @except_method_briefer
     def RenewData(self, first_time, date, data):
+        self.AddToPQueue(date, data.keys())
         if len(self.actualData) == 0:
             self.actualData.update({date: data})
             self.SaveToDB(first_time = first_time, date = date, data = data)
@@ -733,14 +702,22 @@ class Main_Panel(wx.Panel):
         else:
             self.actualData.update({date: data})
             self.SaveToDB(first_time = first_time, date = date, data = data)
-        #ToLog(f"Now ActualData\n {self.actualData}")
+        #print(f"Now ActualData\n {self.actualData}")
+
+        if self.chFrame:
+            self.chFrame.UpdateData(upd_data = self.chData)
+        if len(list(self.DThreads.keys())) < len(list(self.conns.keys())):
+            templist = list(self.conns.keys())[:]
+            for item in templist:
+                if item not in list(self.DThreads.keys()):
+                    self.PopOldDate(date = item, source = "RenewData", except_DThreads = True)
 
     @except_method_briefer
     def CompareData(self, date, data):
         if self.actualData[date] == data:
-            ToLog(f"No changes in actualData on date {date}")
+            #ToLog(f"No changes in actualData on date {date}")
+            pass
         else:
-            #print(", ".join(data.keys()))
             for item in data.keys():
                 #if new meeting added
                 if item not in self.actualData[date].keys():
@@ -749,7 +726,8 @@ class Main_Panel(wx.Panel):
                     self.SaveToDB(first_time = False, date = date, item = data[item])
                 else:
                     if data[item] == self.actualData[date][item]:
-                        ToLog(f"No changes in item {item}")
+                        #ToLog(f"No changes in item {item}")
+                        pass
                     else:
                         ToLog(
                             f"Changes in item {item}:\n\t previous field = " +
@@ -759,9 +737,9 @@ class Main_Panel(wx.Panel):
             diff = list(set(self.actualData[date].keys()) - set(data.keys())) 
             if len(diff) > 0:
                 self.PopMeetings(date, diff)
-            self.actualData[date] = data
+            self.actualData.update({date: data})
 
-    @except_method_dec
+    @except_method_briefer
     def CreateNewDB(self, date = "01.01.2024"):
         nameDB = self.DocDir + "\\Monitoring_Logs\\mchanges_" + date + ".db"
         if "mchanges_" + date + ".db" in os.listdir(self.DocDir + "\\Monitoring_Logs"):
@@ -793,7 +771,7 @@ class Main_Panel(wx.Panel):
                 "note2 CHAR(100));")
             self.conns.update({date: conn})
 
-    @except_method_brief
+    @except_method_briefer
     def SaveToDB(self, first_time = False, date = "01.01.2024", data = None, item = None):
         self.CreateNewDB(date = date)
         #print(f"I received data = {data}, item = {item}")
@@ -809,11 +787,10 @@ class Main_Panel(wx.Panel):
                     "INSERT INTO MEETING_CHANGES VALUES (" +
                     "NULL,'"  + Dt_to_txt(datetime.now()) + "','" +
                     str(datetime.now())[11:16] + "','" + date + "','" +
-                    "','".join(item) + "','this item added when thread was started',NULL)")
-                
+                    "','".join(item) + "','added at start',NULL)")      
             self.conns[date].commit()
 
-        if data:
+        if data:       
             for key in data.keys():
                 self.SaveToDB(first_time = first_time, date = date, item = data[key])
                 
@@ -826,9 +803,84 @@ class Main_Panel(wx.Panel):
                 "NULL,'"  + Dt_to_txt(datetime.now()) + "','" +
                 str(datetime.now())[11:16] + "','" + date + "','" +
                 item + "','Deleted','Deleted','Deleted','Deleted','Deleted','Deleted',NULL,NULL)")
-                #item + "','Deleted'" * 6 + ",NULL,NULL)")
             self.conns[date].commit()
 
+    #@except_method_dec
+    def AddToPQueue(self, date = "somedate", keys = "somekeys"):
+        if date not in self.PQueueItems.keys():
+            self.PQueueItems.update({date: set(keys)})
+            self.CheckMThreads(date = date, newid = True)
+        else:
+            if set(keys) == self.PQueueItems[date]:
+                #print(f"no changes in ids list on date {date}")
+                self.CheckMThreads(date = date, newid = False)
+            else:
+                self.PQueueItems.update({date: set(keys)})
+                self.CheckMThreads(date = date, newid = True)
+
+    @except_method_briefer
+    def CheckMThreads(self, date = "somedate", newid = True):
+        if date in self.MThreads.keys():
+            if self.MThreads[date].is_alive() == True:
+                #print(f"Mthread {date} is alive, kick him")
+                self.MThreads[date].Kick()
+                if newid == True:
+                    #print(f"Mthread {date} is alive, update data to " + str(self.PQueueItems[date]))
+                    self.MThreads[date].newids = self.PQueueItems[date]
+                    
+            else:
+                #print(f"Mthread {date} not alive, starting new")
+                thread = MeetingThread(date = date, ids = self.PQueueItems[date], docdir = self.DocDir, pub = self.pub)
+                thread.setDaemon(True)
+                thread.start()
+                self.MThreads.update({date: thread})
+        else:
+            #print(f"No such Mthread {date}, creating new")
+            thread = MeetingThread(date = date, ids = self.PQueueItems[date], docdir = self.DocDir, pub = self.pub)
+            thread.setDaemon(True)
+            thread.start()
+            self.MThreads.update({date: thread})
+
+    @except_method_briefer
+    def ToPChanges(self, date = "somedate", someid = "someid", listdata = [], comment = None):
+
+        #if no such date in conns
+        if date not in self.DThreads.keys():
+            ToLog(f"Ignoring ToPChanges from {date}, it is not in PThread keys:" + str(self.DThreads.keys()))
+            print(f"Ignoring ToPChanges from {date}, it is not in PThread keys:" + str(self.DThreads.keys()))
+            return
+            #nameDB = self.DocDir + "\\Monitoring_Logs\\mchanges_" + date + ".db"
+            #self.conns.update({date: sqlite3.connect(nameDB)})
+
+        #create table if not exist
+        tablename = "id" + someid
+        self.conns[date].execute(
+            "CREATE TABLE IF NOT EXISTS '" + tablename + "'" + 
+            "(num INTEGER PRIMARY KEY AUTOINCREMENT," +
+            "date_now TEXT NOT NULL," +
+            "time_now TEXT NOT NULL," +
+            "id TEXT NOT NULL," +
+            "region TEXT NOT NULL," +
+            "room TEXT NOT NULL," +
+            "dolgnost TEXT," +
+            "fio TEXT," +
+            "note TEXT," + 
+            #"show_status BOOLEAN NOT NULL CHECK(show_status IN (0, 1)),"
+            "note1 CHAR(100)," +
+            "note2 CHAR(100));")
+
+        #add listdata to table
+        for item in listdata:
+            self.conns[date].execute(
+                "INSERT INTO '" + tablename + "' VALUES (" +
+                "NULL,'"  + Dt_to_txt(datetime.now()) + "','" +
+                str(datetime.now())[11:16] + "','" + someid + "','" + 
+                "','".join(item) + "','" +
+                str(comment) + "',NULL)")
+
+        self.conns[date].commit()  
+        print(f"{comment} some to pchanges_{date}.db")
+            
     @except_method_brief
     def OnBtn(self, evt):
         ToLog("OnBtn pressed")
@@ -837,14 +889,14 @@ class Main_Panel(wx.Panel):
 #=============================================
 #=============================================
 #=============================================
-#RenewThread
+#ScanDayThread
 class ScanDayThread(threading.Thread):
     def __init__(self, num_day = 0, pub = "my_pub", date = None):
         super().__init__()
         self.stop = False
         self.pub = pub
         if date:
-            self.date = date
+            self.date = str(date)
         else:
             date_tm = datetime.today() + timedelta(days = num_day)
             self.date = Dt_to_txt(date_tm)
@@ -860,7 +912,7 @@ class ScanDayThread(threading.Thread):
 
     @except_method_briefer
     def ScanNow(self, first_time = True):
-        ListDate = SpisokFromDate(date = self.date)
+        ListDate = DataForMChanges(date = self.date)
         wx.CallAfter(
             pub.sendMessage, self.pub,
             mess = ["ListDate", first_time, self.date, ListDate])
@@ -870,6 +922,88 @@ class ScanDayThread(threading.Thread):
         ToLog(f"Thread on date {self.date} received Stop command")
         self.stop = True
 
+#=============================================
+#=============================================
+#=============================================
+#=============================================
+#ScanMeetingThread
+class MeetingThread(threading.Thread):
+    def __init__(self, date = "01.01.2024", ids = {"000000"}, docdir = "somedir", pub = "somepub"):
+        super().__init__()
+        self.stop = False
+        self.pub = pub
+        self.date = date
+        self.ids = ids
+        self.newids = ids
+        self.docdir = docdir
+        self.checking = True
+        self.checknow = True
+        self.dictData = {}
+        
+    @except_method_brief
+    def run(self):
+        ToLog(f"Meeting Thread on date {self.date} started")
+        while True:
+            if self.stop == True:
+                break
+            if self.checknow == False:
+                time.sleep(2)
+                continue
+            self.ParseData(self.ids)
+            self.checknow = False
+            self.ids = self.newids
+
+        ToLog(f"Meeting Thread on date {self.date} finished")
+
+    @except_method_briefer
+    def Kick(self):
+        #print(f"kicked mthread {self.date}")
+        self.checknow = True
+
+    @except_method_briefer
+    def ParseData(self, ids):
+        for someid in ids:
+            if self.stop == True:
+                break
+            DataId = DataOneMeeting(idsov = someid)
+            self.CompareData(someid, DataId)
+
+    @except_method_briefer
+    def CompareData(self, someid, DataId):
+        if someid not in self.dictData.keys():
+            self.dictData.update({someid: DataId})
+            self.WriteToConn(someid = someid, listdata = DataId, comment = "added first time")
+        else:
+            if self.dictData[someid] == DataId:
+                return
+            else:
+                #check difference detween sets
+                try:
+                    if set(self.dictData[someid]) != set(DataId):
+                        self.WriteToConn(
+                            someid = someid,
+                            listdata = list(set(self.dictData[someid]) - set(DataId)),
+                            comment = "deleted")
+                        self.WriteToConn(
+                            someid = someid,
+                            listdata = list(set(DataId) - set(self.dictData[someid])),
+                            comment = "added")
+                    self.dictData.update({someid: DataId})
+                except Exception:
+                    print("ERROR")
+                        
+    @except_method_brief        
+    def Stop(self):
+        ToLog(f"Meeting Thread on date {self.date} received Stop command")
+        self.stop = True
+
+    @except_method_briefer
+    def WriteToConn(self, someid = "someid", listdata = [], comment = "default comment"):
+        if len(listdata) == 0:
+            return
+        wx.CallAfter(
+            pub.sendMessage, self.pub,
+            mess = ["AddToPChanges", self.date, someid, listdata, comment])
 
 #=============================================
 #=============================================
@@ -878,7 +1012,7 @@ class ScanDayThread(threading.Thread):
 #RenewThread
 class RenewThread(threading.Thread):
     @except_method_dec
-    def __init__(self, evt, pub = "somePub", settingsDict = {"some": "some"}):
+    def __init__(self, evt, pub = "somePub", settingsDict = {"some": "some"}, testChDate = False):
         super().__init__()
         self.stop = False
         self.evt = evt
@@ -888,12 +1022,14 @@ class RenewThread(threading.Thread):
         self.TimeFTP = int(self.settings["time_ftp"])
         self.cycles = self.TimeFTP // self.TimeRenew
         self.today = datetime.today().date()
+        self.testChDate = testChDate
         #print("at start today = " + str(self.today))
-        self.evt.set()
+        #self.evt.set()
         self.once = 0
         
     @except_method_brief
     def run(self):
+        #print(f"Renew thread started wuth pub {self.pub} and timerenew {self.TimeRenew}")
         ToLog(f"Renew thread started wuth pub {self.pub} and timerenew {self.TimeRenew}")
         thread = FTPThread(self.settings, self.pub)
         thread.setDaemon(True)
@@ -901,8 +1037,9 @@ class RenewThread(threading.Thread):
         self.RenewThreadCommand(first_time = True)
         startTime = time.time()
         now_cycles = 0
-        #tempor
-        #offset = 1
+        if self.testChDate == True:
+            offset = 1
+        
         while True:
             #print("--iter--")
             self.evt.wait()
@@ -916,16 +1053,16 @@ class RenewThread(threading.Thread):
                 continue
             else:
                 self.RenewThreadCommand()
-                #if now_cycles % 2 == 0:
-                    #tempor
-                    #self.ChangedDate(date = (datetime.today() + timedelta(days = offset)))
-                    #print("temporary incrasing ate by 1")
-                    #self.once = 1
-                    #offset = offset + 1
+                if self.testChDate == True:
+                    if now_cycles % 2 == 0:
+                        self.ChangedDate(date = (datetime.today() + timedelta(days = offset)))
+                        print("temporary incrasing ate by 1")
+                        self.once = 1
+                        offset = offset + 1
 
-                #tempor commented
-                if datetime.today().date() != self.today:
-                    self.ChangedDate(date = datetime.today())
+                else:
+                    if datetime.today().date() != self.today:
+                        self.ChangedDate(date = datetime.today())
 
                 startTime = time.time()
                 now_cycles += 1
@@ -942,13 +1079,13 @@ class RenewThread(threading.Thread):
         ToLog(f"Renew thread received Stop command")
         self.stop = True
 
-    @except_method_brief
+    @except_method_briefer
     def RenewThreadCommand(self, first_time = False):
         if first_time == False:
             ToLog(f"Threads will be renewed because of time Renew = {self.TimeRenew} elapsed")
             wx.CallAfter(pub.sendMessage, self.pub, mess = "RenewNow")
         else:
-            ToLog(f"Threads will be renewed because it's lust started")
+            ToLog(f"Threads will be renewed because it's just started")
             wx.CallAfter(pub.sendMessage, self.pub, mess = "RenewNowFirst")
 
     @except_method_dec
@@ -958,9 +1095,9 @@ class RenewThread(threading.Thread):
         self.today = date.date()
         wx.CallAfter(pub.sendMessage, self.pub, mess = ["ChangedDate", date])
 
-    @except_method_brief
+    @except_method_briefer
     def UpdateData(self, upd_data = {"somedata": "data"}):
-        print("upd_data")
+        #print("upd_data")
         self.settings = upd_data
         self.TimeRenew = int(self.settings["time_renew"])
         self.TimeFTP = int(self.settings["time_ftp"])
@@ -986,28 +1123,14 @@ class FTPThread(threading.Thread):
     def run(self):
         #print(f"FTP thread started")
         ToLog(f"FTP thread started")
-        self.SendToFTP(path = self.settings["ftp_addr"], login = self.settings["ftp_login"], password = self.settings["ftp_password"], key = "mchanges_")
-        self.CleanOldFiles(key = "mchanges_")
+        self.SendToFTP(path = self.settings["ftp_addr"], login = self.settings["ftp_login"], password = self.settings["ftp_password"], keys = ["mchanges_"])
+        self.CleanFTP(
+            path = self.settings["ftp_addr"], login = self.settings["ftp_login"], password = self.settings["ftp_password"], keys = ["mchanges_"],
+            past_level = int(-15), future_level = int(10))
         #print(f"FTP thread finished")
-        ToLog(f"FTP thread fifnished")
+        ToLog(f"FTP thread finished")
 
-    @except_method_dec
-    def CleanOldFiles(self, key = "some_key"):
-        global MonitLogDir
-        for item in os.listdir(MonitLogDir):
-            if item.find(key) != -1 and item.find(".db") != -1:
-                name = item[item.find(key) + len(key):item.find(".db")]
-                date = Dt_to_txt(datetime.today())
-                if datetime.strptime(name, "%d.%m.%Y") < datetime.strptime(Dt_to_txt(datetime.today()), "%d.%m.%Y"):
-                    os.remove(MonitLogDir + "\\" + item)
-                    ToLog(f"Removed old file = {item}")
-            else:
-                ToLog(f"no remove {item}, it is not auto database file")
-                #print(f"no remove {item}, it is not auto database file")
-            #else:
-            #    print(f"newFile = {item}")
-
-    def SendToFTP(self, path = "10.135.11.177", login = "DB", password = "TSA&44186", key = "somekey"):
+    def SendToFTP(self, path = "10.135.11.177", login = "DB", password = "TSA&44186", keys = ["somekey"]):
         global MonitLogDir
         try:
             namedir = str(socket.gethostname()).replace("\\", " ")
@@ -1015,19 +1138,53 @@ class FTPThread(threading.Thread):
             ftp = ftplib.FTP(path)
             ftp.login(login, password)
             self.CreateDir(ftp, "MonitSpiskiSS\\" + namedir)
-            for file in os.listdir(MonitLogDir):
-                if file.find(key) != -1 and file.find(".db") != -1:
-                    with open(MonitLogDir + "\\" + file, "rb") as somefile:
-                        ftp.storbinary("STOR " + file, somefile)
-                        somefile.close()
-                else:
-                    ToLog(f"not send to FTP {file}, it is not auto database file")
-                    print(f"not send to FTP {file}, it is not auto database file")
+
+            for key in keys:
+                for file in os.listdir(MonitLogDir):
+                    if file.find(key) != -1 and file.find(".db") != -1:
+                        with open(MonitLogDir + "\\" + file, "rb") as somefile:
+                            ftp.storbinary("STOR " + file, somefile)
+                            somefile.close()
+                            ToLog(f"send to FTP file {file}")
+                    else:
+                        ToLog(f"not send to FTP {file}, it is not auto database file with key {key}")
+                        #print(f"not send to FTP {file}, it is not auto database file with key {key}")
+                    
             ftp.quit()
-            wx.CallAfter(pub.sendMessage, self.pub, mess = ["FTPtime", str(datetime.today())])
+            #wx.CallAfter(pub.sendMessage, self.pub, mess = ["FTPtime", str(datetime.today())])
         except Exception as Err:
             print("Error connecting to FTP")
             ToLog("Error connecting to FTP, Error code = " + str(Err))
+
+    def CleanFTP(
+        self, path = "10.135.11.177", login = "DB", password = "TSA&44186", keys = ["somekey"],
+        past_level = int(-20), future_level = int(20)):
+        try:
+            namedir = str(socket.gethostname()).replace("\\", " ")
+            namedir = namedir.replace(":", " ")
+            ftp = ftplib.FTP(path)
+            ftp.login(login, password)
+            self.CreateDir(ftp, "MonitSpiskiSS\\" + namedir)
+
+            datelist = []
+            for day in range (past_level, future_level):
+                date_tm = datetime.today() + timedelta(days = day)
+                datelist.append("mchanges_" + Dt_to_txt(date_tm) + ".db")
+            #print("datelist for save = " + str(datelist))
+
+            for item in ftp.nlst():
+                if item not in datelist:
+                    ftp.delete(item)
+                    ToLog(f"From FTP deleted file {item}")
+                    #print(f"I want delete {item}")
+                
+            ftp.quit()
+            wx.CallAfter(pub.sendMessage, self.pub, mess = ["FTPtime", str(datetime.today())])
+        except Exception as Err:
+            print("Error Cleaning to FTP")
+            ToLog("Error Cleaning to FTP, Error code = " + str(Err))
+            #raise Exception
+            
 
     @info_method_dec
     def CreateDir(self, ftp, dirname):
@@ -1057,7 +1214,6 @@ class ConvertThread(threading.Thread):
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table';")
         self.tables = [table[0] for table in cursor.fetchall()]
             
-        #print("found tables = " + str(self.tables))
         wb = openpyxl.Workbook()
         for table in self.tables:
             wb.create_sheet(table)
@@ -1123,56 +1279,6 @@ def ScaleBitmap(bitmap, size):
     image = bitmap.ConvertToImage()
     image = image.Scale(size[0], size[1], wx.IMAGE_QUALITY_HIGH)
     return wx.Image(image).ConvertToBitmap()
-
-#=============================================
-#=============================================
-#=============================================
-#=============================================
-# Tolog - renew log
-def ToLog(message, startThread = False):
-    try:
-        global LogQueue
-        LogQueue.put(str(datetime.today())[10:19] + "  " + str(message) + "\n")
-    except Exception as Err:
-        print("Error in ToLog function, Error code = " + str(Err))
-        
-#=============================================
-#=============================================
-#=============================================
-#=============================================
-# Thread for saving logs
-class LogThread(threading.Thread):
-    def __init__(self):
-        super().__init__()
-        self.stop = False
-
-    def run(self):
-        global LogQueue
-        ToLog("LogThread started!!!")
-        self.writingQueue()
-        ToLog("LogThread finished!!!")
-
-    def writingQueue(self):
-        global LogQueue, LogDir
-        while True:
-            try:
-                if LogQueue.empty():
-                    if self.stop == True:
-                        print("LogThreadStopped")
-                        break
-                    time.sleep(1)
-                    continue
-                else:
-                    with open(LogDir + "\\" + str(datetime.today())[0:10] + ".cfg", "a") as file:
-                        while not LogQueue.empty():
-                            mess = LogQueue.get_nowait()
-                            file.write(mess)
-                            #print("Wrote to Log:\t" + mess)
-                        file.close()
-            except Exception as Err:
-                print("Error writing to Logfile, Error code = " + str(Err))
-                #raise Exception
-
 #=============================================
 #=============================================
 #=============================================
@@ -1241,11 +1347,6 @@ def FindMyDir(nameDir, subDirs = None):
                 os.mkdir(DocDir + "\\" + word)
                 ToLog(word + " folder was Created")
     return DocDir
-    #if "DataBase.db" not in os.listdir(DocDir + "\\Based"):
-    #    CopyFile(os.getcwd() + "\\Based\\DataBase.db", DocDir + "\\Based\\DataBase.db")
-    #else:
-    #    os.remove(DocDir + "\\Based\\DataBase.db")
-    #    CopyFile(os.getcwd() + "\\Based\\DataBase.db", DocDir + "\\Based\\DataBase.db")
     
 #===============================================
 #===============================================
@@ -1256,305 +1357,39 @@ def FindMyDir(nameDir, subDirs = None):
 def SomeError(parent, title):
     wx.MessageBox(title, "Ошибка", wx.OK)
 
-#===============================================
-#===============================================
-#===============================================
-#===============================================
-# List of meetings
-@except_foo_dec
-def SpisokFromDate(date = "03.12.2024", region = 0):
-  
-    # Подставляем дату в ссылку:
-    ssilka = str("http://10.132.71.156/pls/ss/selector.sels.list?us=" + str(region) +
-        "&str=" + date + "&wday=5")
 
-    response = requests.get(
-        f"http://10.132.71.156/pls/ss/selector.sels.list?us={region}&str={date}&wday=5")
-
-    idsov = []
-    namesov = []
-    rezhimsov = []
-    timesov = []
-    initsov = []
-    studiasov = []
-    themesov = []
-    spisoksov = []
-    spisokuchast = []
-    nomsov = 1
-
-    # Если Управление
-    if int(region) == 0:
-        
-        filesplit = response.text.splitlines()
-        #print(str(filesplit))
-
-        #Задаем параметры поиска
-        poisk = "&us=0&sid="
-        poisk2 = '''<td width=15% class=zag>Примечание</td>'''
-        poisk3 = '''&nbsp;</td></tr>'''
-        poisk4 = '''<td class="zag" rowspan=2>'''
-        poisk5 = '''<td class="msk" rowspan=2>'''
-        poisk6 = '''<a href="javascript:go(0,1,0'''
-        poisk7 = '''Регион-'''
-        poisk8 = '''&nbsp;'''
-        poisk9 = '''&nbsp;</td><td class=norm>&nbsp'''
-        nachalo = "2"
-        konec = '''</td>'''
-
-        #Обработка кода страницы и составление списков
-        for i in range(0, len(filesplit)-1):
-            filesplit[i] = str(filesplit[i]).strip()
-
-            #добавление в списки разделителей - строки Начало совещания и Список участников
-            if (
-                filesplit[i].find('''<td width=15% class=zag>Примечание</td>''')>-1
-                or
-                filesplit[i]=='''&nbsp;</td></tr>'''):
-                spisoksov.append(str(nomsov))
-                spisokuchast.append("Список участников  "+str(nomsov))
-                nomsov = nomsov + 1
-
-            #составление списка участников конференций (необработанного)
-            if filesplit[i].find('''<a href="javascript:go(0,1,0''')!=-1:
-                spisokuchast.append(filesplit[i][filesplit[i].find('''">''')+2:filesplit[i].find('''</a>''')])
- 
-            #составление списка как в SMS
-            if (
-                (filesplit[i].find(poisk4)!=-1)
-                or
-                (filesplit[i].find(poisk5)!=-1)):
-                if filesplit[i].find('''<br>''') > -1:
-                    filesplit[i] = filesplit[i][:filesplit[i].find('''</td>''')+1]
-                filesplit[i] = filesplit[i][filesplit[i].find(nachalo) + 2:filesplit[i].find(konec)]
-                spisoksov.append(filesplit[i])
-                #print("\tfrom SMS = " + str(filesplit[i]))
-
-            #find themes
-            if filesplit[i].find(poisk9)!=-1:
-                filesplit[i] = filesplit[i][filesplit[i].find(poisk9) + len(poisk9) + 1:]
-                spisoksov.append(filesplit[i])
-                #print("\ttheme = " + str(filesplit[i]))
-
-            #составление списка ID конференций (внутри списка SMS)
-            if filesplit[i].find(poisk)!=-1:
-                filesplit[i] = filesplit[i][filesplit[i].find(poisk)+10:filesplit[i].find('''>"''')-1]
-                spisoksov.append(str(filesplit[i]))
-
-        #print("begin of deparse")
-        for i in range (6, len(spisoksov)):
-            #print(str(spisoksov[i]))
-            if (i+1)%7==0:
-                studiasov.append(spisoksov[i-5])
-                rezhimsov.append(spisoksov[i-4])
-                timesov.append(spisoksov[i-3])
-                initsov.append(spisoksov[i-2])
-                themesov.append(spisoksov[i-1])
-                idsov.append(spisoksov[i])
-
-    # формируем списки с учетом отмен и проверок
-    idsov1 = []
-    studiasov1 = []
-    themesov1 = []
-    #namesov1 = []
-    rezhimsov1 = []
-    initsov1 = []
-    timesov1 = []
-    uchastsov1 = []
-    #nomer = []
-    #nomernach = 1
-    uchastsov = []
-    temp_uchast = []
-
-    # Формируем список списков участников
-    for i in range (1, len(spisokuchast)):
-        if spisokuchast[i].find("Список участников")==-1:
-            temp_uchast.append(spisokuchast[i])
-        else:
-            if len(temp_uchast)==0:
-                uchastsov.append(["None"])
-                temp_uchast.clear()
-            else:
-                uchastsov.append(temp_uchast[:])
-                temp_uchast.clear()
-                    
-    for i in range (0, len(timesov)):
-        #if (
-        #    rezhimsov[i].find('''тмена''')!=-1
-        #    or
-        #    rezhimsov[i].find('''роверка''')!=-1):
-        #    continue
-        if 1 == 0:
-            pass
-        else:
-            #nomernach = nomernach + 1
-            #idsov1.append(idsov[i])
-            #rezhimsov1.append(rezhimsov[i])
-            #studiasov1.append(studiasov[i])
-            #themesov1.append(themesov[i])
-                   
-            if len(timesov[i]) < 16:
-                timesov[i] = timesov[i].replace("<br>-<br>", "")
-                if timesov[i][-1] == ":":
-                    timesov[i] = timesov[i][:-1]
-                timesov1.append(timesov[i])
-                             
-            else:
-                timesov1.append(timesov[i].replace("<br>-<br>", "-"))
-            #initsov1.append(initsov[i])
-            #nomer.append(str(nomernach-1))
-            #if region == 0:
-            #uchastsov1.append(uchastsov[i])
-
-    itog = {}
-    for item in range (0, len(idsov)):
-        itog.update(
-            {idsov[item]: [idsov[item], studiasov[item], initsov[item],
-                           timesov1[item], rezhimsov[item], themesov[item],
-                           ", ".join(uchastsov[item][:])]})
-    #itog.append(idsov)
-    #itog.append(studiasov)
-    #itog.append(initsov)
-    #itog.append(timesov1)
-    #itog.append(rezhimsov)
-    #itog.append(themesov)
-    #itog.append(uchastsov)
-
-    return itog
-
-#===============================================
-#===============================================
-#===============================================
-#=============================================== 
-# Making list of meeting with some id
-@except_foo_dec
-def formfile(idsov):
-    itogitogov = []
-    for k in range (0,5):
-        ssilkaSS = str(
-            "http://10.132.71.156/pls/ss/selector.report.study_p?sid="+idsov+"&us="+str(k))
-        
-        # Запрашиваем код
-        try:
-            responseSS = requests.get(ssilkaSS)
-        except Exception as Err:
-            ToLog("Ошибка в обработке страницы списка присутствующих, код ошибки = " + str(Err))
-            sys.exit()
-        filesplit = responseSS.text.splitlines()
-
-        #Задаем наши списки и номер совещания
-        dolgnost = []
-        fio = []
-        prim = []
-
-        #Обработка кода страницы и составление списков
-        for i in range(0, len(filesplit)-1):                            
-                # Формируем списки для таблицы - должность, ФИО, Примечание
-            if (
-                filesplit[i].find('''<tr><td colspan=3 class=z2>''')!=-1
-                or
-                filesplit[i].find('''<tr><td class=spr valign=top>''')!=-1):
-                
-                if filesplit[i].find('''<tr><td colspan=3 class=z2>''')!=-1:
-                    dolgnost.append("КАБИНЕТ" + str(filesplit[i][filesplit[i].find('''z2>''')+3:filesplit[i].find('''</td>''')]))
-                    fio.append("NONE")
-                    prim.append("NONE")
-
-                if filesplit[i].find('''<tr><td class=spr valign=top>''')!=-1:
-                    dolgnost.append(filesplit[i+1])
-                    fio.append("Новые участники:")
-                    n = i
-                    while filesplit[n].find('''</table></td>''')==-1:
-                        n = n+1
-                    for s in range (i,n):
-                       
-                        if filesplit[s].find('''<td class=spr>''')!=-1:
-                            fio.append(
-                                str(filesplit[s])[filesplit[s].find('''<td class=spr>''')+14:filesplit[s].find('''&nbsp;&nbsp''')]+
-                                str("  ")+str(filesplit[s])[filesplit[s].find('''&nbsp;&nbsp''')+12:filesplit[s].find('''</td>''')])
-                        elif (
-                            filesplit[s+1].find('''</table></td>''')!=-1
-                            and
-                            filesplit[s].find('''<table width=''')!=-1):
-                            fio.append("PUSTO")
-                                                
-                    prim.append(filesplit[n+2])
-
-        # Преобразовываем список участников, чтобы сгруппировать их по должностям    
-        fio.append(str("Новые участники"))
-        fio1 = []
-
-        for i in range (0, len(fio)):
-            if fio[i] =="NONE":
-                fio1.append("NONE")
-            elif (fio[i].find("Новые участники")!=-1) and (i<(len(fio)-2)):
-                fio1.append(" ")
-                n = i+1
-                while fio[n].find("Новые участники")==-1:
-                    n = n+1
-                for s in range (i,n):
-                    if fio[s].find("Новые участники")==-1:
-                        temp = fio1[-1][:]
-                        fio1[-1] = temp+"/NEXT/"+fio[s][:]
-
-        #for i in range(0, len(prim)):
-        #    print ("Долж = "+dolgnost[i]+" --- ФИО = "+fio1[i]+" --- Прим = "+prim[i])
-
-        # итог цикла
-        itog = [dolgnost, fio1, prim]
-        itogitogov.append(itog)
-
-    itoglist = []
-    for k in range (0, 5):
-        temp = [[], [], []]
-
-        dolg = itogitogov[k][0]
-        fio = itogitogov[k][1]
-        prim = itogitogov[k][2]
-
-        for i in range (1, len(dolg)+1):
-            dolg[i-1] = dolg[i-1].replace("&nbsp;", " ").strip()
-            fio[i-1] = fio[i-1][7:].replace("/NEXT/"," ")
-            fio[i-1] = fio[i-1].replace("PUSTO", " ")
-            fio[i-1] = fio[i-1].replace("NONE", "").strip()
-            prim[i-1] = prim[i-1].replace("&nbsp;"," ").strip()
-
-            
-        itoglist.append([dolg[:], fio[:], prim[:]])
-    temp = itoglist
-    return itoglist
-    
 #=============================================
 #=============================================
 #=============================================
 #=============================================
-# Определение локали!
-locale.setlocale(locale.LC_ALL, "")
+if __name__ == '__main__':
+    # Определение локали!
+    locale.setlocale(locale.LC_ALL, "")
 
-global LogDir, MonitLogDir, LogQueue, MyDate, threadLog
-LogQueue = queue.Queue()
-MyDate = "18.12.2024"
-MonitOpen = False
+    global LogDir, MonitLogDir, MyDate, threadLog
+    MyDate = "22.01.2025"
+    MonitOpen = False
 
-ToLog("\n\n" + "!" * 40)
-ToLog("Application started")
+    ToLog("\n\n" + "!" * 40)
+    ToLog("Application started")
 
-DocDir = FindMyDir(nameDir = "Monit_SpiskiSS_Files", subDirs = ["Script_Logs", "Monitoring_Logs", "Based", "Temp"])
-LogDir = DocDir + "\\Script_Logs"
-MonitLogDir = DocDir + "\\Monitoring_Logs"
-ClearLogs(LogDir)
-ClearLogs(MonitLogDir)
+    DocDir = FindMyDir(nameDir = "Monit_SpiskiSS_Files", subDirs = ["Script_Logs", "Monitoring_Logs", "Based", "Temp"])
+    LogDir = DocDir + "\\Script_Logs"
+    MonitLogDir = DocDir + "\\Monitoring_Logs"
+    ClearLogs(LogDir)
+    ClearLogs(MonitLogDir)
 
-threadLog = LogThread()
-threadLog.setDaemon(True)
-threadLog.start()
+    threadLog = LogThread(logdir = LogDir)
+    threadLog.setDaemon(True)
+    threadLog.start()
 
-ex = wx.App()
+    ex = wx.App()
 
-HelloFrame()
-global Frame_Osn
-Frame_Osn = Main_Frame(None, DocDir = DocDir)
+    HelloFrame(path_to_png = os.getcwd() + "\\images\\WritingPNG.png")
+    global Frame_Osn
+    Frame_Osn = Main_Frame(None, DocDir = DocDir)
 
-ex.MainLoop()
+    ex.MainLoop()
 
 
 
